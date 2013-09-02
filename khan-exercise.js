@@ -237,15 +237,17 @@ var Khan = (function() {
     // Add in the site stylesheets
     if (localMode) {
         (function() {
-            var link = document.createElement("link");
-            link.rel = "stylesheet";
-            link.href = urlBase + "css/khan-site.css";
-            document.getElementsByTagName("head")[0].appendChild(link);
+            var addLink = function(url) {
+                var link = document.createElement("link");
+                link.rel = "stylesheet";
+                link.href = urlBase + url;
+                document.getElementsByTagName("head")[0].appendChild(link);
+            };
 
-            link = document.createElement("link");
-            link.rel = "stylesheet";
-            link.href = urlBase + "css/khan-exercise.css";
-            document.getElementsByTagName("head")[0].appendChild(link);
+            addLink("css/khan-site.css");
+            addLink("css/khan-exercise.css");
+            addLink("local-only/katex/katex.css");
+            addLink("local-only/katex/fonts/fonts.css");
         })();
     }
 
@@ -405,6 +407,7 @@ var Khan = (function() {
                 callback();
                 return;
             }
+            debugLog("loadScript loading " + url);
 
             // Adapted from jQuery getScript (ajax/script.js) -- can't use
             // jQuery here because we load jQuery using this routine
@@ -422,6 +425,8 @@ var Khan = (function() {
             script.onload = script.onreadystatechange = function() {
                 if (!script.readyState ||
                         (/loaded|complete/).test(script.readyState)) {
+                    debugLog("loadScript loaded " + url);
+
                     // Handle memory leak in IE
                     script.onload = script.onreadystatechange = null;
 
@@ -470,6 +475,7 @@ var Khan = (function() {
         error: function() {
             if (typeof console !== "undefined") {
                 $.each(arguments, function(ix, arg) {
+                    debugLog("error: " + arg);
                     console.error(arg);
                 });
             }
@@ -609,13 +615,13 @@ var Khan = (function() {
                 e.preventDefault();
 
                 var report = $("#issue").css("display") !== "none",
-                    form = $("#issue form").css("display") !== "none";
+                    form = $("#issue .issue-form").css("display") !== "none";
 
                 if (report && form) {
                     $("#issue").hide();
                 } else if (!report || !form) {
                     $("#issue-status").removeClass("error").html(issueIntro);
-                    $("#issue, #issue form").show();
+                    $("#issue, #issue .issue-form").show();
                     $("html, body").animate({
                         scrollTop: $("#issue").offset().top
                     }, 500, function() {
@@ -633,11 +639,11 @@ var Khan = (function() {
             });
 
             // Submit an issue.
-            $("#issue form input:submit").click(function(e) {
+            $("#issue .issue-form input:submit").click(function(e) {
                 e.preventDefault();
 
                 // don't do anything if the user clicked a second time quickly
-                if ($("#issue form").css("display") === "none") return;
+                if ($("#issue .issue-form").css("display") === "none") return;
 
                 var framework = Exercises.getCurrentFramework(),
                     issueInfo = framework === "khan-exercises" ?
@@ -680,6 +686,7 @@ var Khan = (function() {
                 if (mathjaxLoadFailures.length > 0) {
                     body += "\n\n" + mathjaxLoadFailures;
                 }
+                body += "\n\n" + debugLogLog.join("\n");
 
                 // flagging of browsers/os for issue labels. very primitive, but
                 // hopefully sufficient.
@@ -699,7 +706,8 @@ var Khan = (function() {
                         snowleo: agent_contains("OS X 10_6") || agent_contains("OS X 10.6"),
                         lion: agent_contains("OS X 10_7") || agent_contains("OS X 10.7"),
                         scratchpad: (/scratch\s*pad/i).test(body),
-                        ipad: agent_contains("iPad")
+                        ipad: agent_contains("iPad"),
+                        undef: Exercises.guessLog == null
                     },
                     labels = [];
                 $.each(flags, function(k, v) {
@@ -714,7 +722,7 @@ var Khan = (function() {
                     labels.push(type.slice("issue-".length));
 
                     var hintOrVideoMsg = $._("Please click the hint button above " +
-                        "to see our solution, or watch a video for additional help.");
+                        "to see our solution or watch a video for additional help.");
                     var refreshOrBrowserMsg = $._("Please try a hard refresh " +
                         "(press Ctrl + Shift + R) or use Khan Academy from a " +
                         "different browser (such as Chrome or Firefox).");
@@ -754,7 +762,7 @@ var Khan = (function() {
                     dataType: "json",
                     success: function(data) {
                         // hide the form
-                        $("#issue form").hide();
+                        $("#issue .issue-form").hide();
 
                         // show status message
                         $("#issue-status").removeClass("error")
@@ -808,6 +816,8 @@ var Khan = (function() {
             (new Date().getTime() & 0xffffffff);
 
     if (localMode) {
+        var lang = Khan.query.lang || "en-US";
+
         // Load in jQuery and underscore, as well as the interface glue code
         // TODO(cbhl): Don't load history.js if we aren't in readOnly mode.
         var initScripts = [
@@ -825,11 +835,12 @@ var Khan = (function() {
                 "../local-only/jquery.ui.dialog.js",
                 "../local-only/jquery.qtip.js",
                 "../local-only/underscore.js",
+                "../local-only/kas.js",
                 "../local-only/jed.js",
                 "../local-only/i18n.js",
-                // TODO(csilvers): I18N: pick the file based on lang=XX param
-                "../local-only/localeplanet/icu.en-US.js",
+                "../local-only/localeplanet/icu." + lang + ".js",
                 "../local-only/i18n.js",
+                "../local-only/katex/katex.js",
                 "../exercises-stub.js",
                 "../history.js",
                 "../interface.js",
@@ -1064,8 +1075,13 @@ var Khan = (function() {
             makeProblem(typeOverride, seedOverride);
         }
 
+        // Use a separate variable here because if exerciseID changes, we still
+        // want to log the old one.
+        var exid = exerciseId;
+        debugLog("loading and rendering " + exid);
         startLoadingExercise(exerciseId, exerciseName, exerciseFile).then(
             function() {
+                debugLog("loaded " + exid + ", now rendering");
                 finishRender();
             });
     }
@@ -1159,6 +1175,10 @@ var Khan = (function() {
                 // Or by its ID
                 problems.filter("#" + id);
 
+            if (!problem.length) {
+                throw new Error("Unknown problem type " + id);
+            }
+
         // Otherwise we grab a problem at random from the bag of problems
         // we made earlier to ensure that every problem gets shown the
         // appropriate number of times
@@ -1176,7 +1196,7 @@ var Khan = (function() {
         // Find which exercise this problem is from
         exercise = problem.parents("div.exercise").eq(0);
 
-        debugLog("chose problem type and seed");
+        debugLog("chose problem type and seed for " + exercise.data("name"));
 
         // Work with a clone to avoid modifying the original
         problem = problem.clone();
@@ -1341,8 +1361,7 @@ var Khan = (function() {
         if (validator) {
             // Have MathJax redo the font metrics for the solution area
             // (ugh, this is gross)
-            MathJax.Hub.Queue(["Reprocess", MathJax.Hub,
-                    $("#solutionarea")[0]]);
+            KhanUtil.processAllMath($("#solutionarea")[0], true);
 
             // Focus the first input
             // Use .select() and on a delay to make IE happy
@@ -1400,12 +1419,12 @@ var Khan = (function() {
                 examples.append("<li>" + example + "</li>");
             });
 
-            examples.children().runModules();
+            if ($("#examples-show").data("qtip")) {
+                $("#examples-show").qtip("destroy", /* immediate */ true);
+            }
 
             $("#examples-show").qtip({
                 content: {
-                    // TODO(alpert): I'd imagine MathJax is unhappy about this
-                    // removal
                     text: examples.remove(),
                     prerender: true
                 },
@@ -1420,7 +1439,13 @@ var Khan = (function() {
                         length: 0
                     }
                 },
-                hide: {delay: 0}
+                hide: {delay: 0},
+                events: {
+                    render: function() {
+                        // Only run the modules when the qtip is actually shown
+                        examples.children().runModules();
+                    }
+                }
             });
         } else {
             $("#examples-show").hide();
@@ -1709,7 +1734,7 @@ var Khan = (function() {
                 if ($.trim(instr) !== "") {
                     lastInstr = instr;
                     row = $("<div>").addClass("calc-row");
-                    indiv = $("<div>").addClass("input").text(instr).appendTo(row);
+                    indiv = $("<div>").addClass("input").text(instr.replace(/pi/g, "\u03c0")).appendTo(row);
                     try {
                         output = ans = Calculator.calculate(instr, ans);
                         if (typeof output === "number") {
@@ -1729,7 +1754,7 @@ var Khan = (function() {
                 }
 
                 input.val("");
-                input[0].scrollIntoView(false);
+                history.scrollTop(history[0].scrollHeight);
             };
 
             input.on("keyup", function(e) {
@@ -1960,14 +1985,17 @@ var Khan = (function() {
         // Promises for remote exercises contained within this one
         var subpromises = [];
 
+        debugLog("loadExercise start " + fileName);
         // Packing occurs on the server but at the same "exercises/" URL
         $.get(urlBase + "exercises/" + fileName, function(data, status, xhr) {
             if (!(/success|notmodified/).test(status)) {
                 // Maybe loading from a file:// URL?
+                debugLog("loadExercise err " + xhr.status + " " + fileName);
                 Khan.error("Error loading exercise from file " + fileName +
                         xhr.status + " " + xhr.statusText);
                 return;
             }
+            debugLog("loadExercise got " + fileName);
 
             // Get rid of any external scripts in data before we shove data
             // into a jQuery object. IE8 will attempt to fetch these external
@@ -1998,6 +2026,7 @@ var Khan = (function() {
 
             // Maybe the exercise we just loaded loads some others
             remoteExercises.each(function() {
+                debugLog("loadExercise sub " + $(this).data("name"));
                 subpromises.push(loadExercise(this));
             });
 
@@ -2012,6 +2041,7 @@ var Khan = (function() {
             }
 
             $.each(requires.concat(Khan.getBaseModules()), function(i, mod) {
+                debugLog("loadExercise submod " + (mod.src || mod));
                 subpromises.push(loadModule(mod));
             });
 
@@ -2042,10 +2072,12 @@ var Khan = (function() {
             // Wait for any subexercises to load, then resolve the promise
             $.when.apply($, subpromises).then(function() {
                 // Success; all subexercises loaded
+                debugLog("loadExercise finish " + fileName);
                 promise.resolve();
             }, function() {
                 // Failure; some subexercises failed to load
                 // TODO(alpert): Find a useful error message
+                debugLog("loadExercise subfail " + fileName);
                 promise.reject();
             });
         });
@@ -2070,6 +2102,7 @@ var Khan = (function() {
         } else {
             selfPromise = $.Deferred();
         }
+        debugLog("loadModule mod " + src);
 
         var depsPromises = [];
 
